@@ -2,8 +2,8 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/PowerLogger.iml" filepath="$PROJECT_DIR$/PowerLogger.iml" />
-      <module fileurl="file://$PROJECT_DIR$/app/app.iml" filepath="$PROJECT_DIR$/app/app.iml" />
+      <module fileurl="file://$USER_HOME$/Public/code/android-studio-projects/android-power-logger/android-power-logger.iml" filepath="$USER_HOME$/Public/code/android-studio-projects/android-power-logger/android-power-logger.iml" />
+      <module fileurl="file://$USER_HOME$/Public/code/android-studio-projects/android-power-logger/app/app.iml" filepath="$USER_HOME$/Public/code/android-studio-projects/android-power-logger/app/app.iml" />
     </modules>
   </component>
 </project>
