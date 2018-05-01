@@ -6,8 +6,38 @@
     android:layout_height="match_parent"
     tools:context="in.deostroll.powerlogger.MainActivity">
 
-    <ListView
-        android:id="@+id/lvRecords"
+    <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="match_parent" />
+        android:layout_height="match_parent"
+        android:orientation="vertical">
+
+        <Switch
+            android:id="@+id/swPublish"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@android:color/holo_blue_light"
+            android:text="Publish"
+            android:textOff="OFF"
+            android:textOn="ON"
+            android:textSize="24sp" />
+
+        <Button
+            android:id="@+id/btnSetUrl"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Set URL" />
+
+        <ListView
+            android:id="@+id/lvRecords"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            tools:layout_editor_absoluteX="0dp"
+            tools:layout_editor_absoluteY="31dp">
+
+
+
+        </ListView>
+
+    </LinearLayout>
+
 </android.support.constraint.ConstraintLayout>

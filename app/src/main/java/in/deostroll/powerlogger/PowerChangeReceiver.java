@@ -1,5 +1,7 @@
 package in.deostroll.powerlogger;
 
+import android.app.AlarmManager;
+import android.app.PendingIntent;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -21,7 +23,9 @@ import in.deostroll.powerlogger.database.LogEntryDao;
 
 public class PowerChangeReceiver extends BroadcastReceiver {
 
-    private static final String POWER_CONNECTED = "android.intent.action.ACTION_POWER_CONNECTED";
+    static Logger _log = Logger.init("PCR");
+
+    private static PendingIntent mAlarmIntent;
 
     private static final String ACTION_POST = "in.deostroll.powerlogger.httppost";
     private static final String EXTRA_ID = "in.deostroll.powerlogger.recordId";
@@ -29,34 +33,22 @@ public class PowerChangeReceiver extends BroadcastReceiver {
     private static final String ACTION_REFRESH = "in.deostroll.powerlogger.refresh";
 
     @Override
-    public void onReceive(final Context context, Intent intent) {
+    public void onReceive(Context context, Intent intent) {
         String currentAction = intent.getAction();
         String status = null;
-        if(currentAction.equals(POWER_CONNECTED)) {
+        if(currentAction.equals(Constants.POWER_CONNECTED)) {
             status = "ON";
         }
         else {
             status = "OFF";
         }
-        final String finalStatus = status;
 
-//        new Handler().postDelayed(new Runnable() {
-//            @Override
-//            public void run() {
-//                Log.d("APL:PCR", "perform logging");
-//                LogPowerChange(context, finalStatus, getBatteryReading(context));
-//                Toast.makeText(context, String.format("Status: %s", finalStatus), Toast.LENGTH_SHORT).show();
-//            }
-//        }, 1000);
-//        Log.d("APL:PCR", "queued for logging");
-
-        LogPowerChange(context, finalStatus, getBatteryReading(context));
-        Toast.makeText(context, String.format("Status: %s", finalStatus), Toast.LENGTH_SHORT).show();
-
-
+        AlarmManager am = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
+        LogPowerChange(context, status, getBatteryReading(context), am);
+        Toast.makeText(context, String.format("Status: %s", status), Toast.LENGTH_SHORT).show();
     }
 
-    public void LogPowerChange(final Context context, String status, int batteryReading) {
+    public void LogPowerChange(Context context, String status, int batteryReading, AlarmManager am) {
 
         DaoMaster.DevOpenHelper helper = new DaoMaster.DevOpenHelper(context, "logs-db");
         Database db = helper.getWritableDb();
@@ -69,24 +61,23 @@ public class PowerChangeReceiver extends BroadcastReceiver {
         entry.setTimestamp(new Date());
         entry.setIsSynched(false);
 
-        final long recordId = entryDao.insert(entry);
-        Log.d("APL:PCR", "Inserted record");
+        long recordId = entryDao.insert(entry);
+        _log.debug("Inserted record: " + recordId);
 
-        new Handler().postDelayed(new Runnable() {
-            @Override
-            public void run() {
-                Intent svcIntent = new Intent(context, HttpPushService.class);
-                svcIntent.setAction(ACTION_POST);
-                svcIntent.putExtra(EXTRA_ID, recordId);
-                context.startService(svcIntent);
-                Log.d("APL:PCR", "Started the HPS Service");
-            }
-        }, 1500);
+        if(mAlarmIntent != null) {
+            am.cancel(mAlarmIntent);
+        }
 
-        Intent refreshIntent = new Intent();
-        refreshIntent.setAction(ACTION_REFRESH);
+        Intent wakeLockIntent = new Intent(Constants.ACTION_WAKELOCK_ACQUIRE);
+        context.sendBroadcast(wakeLockIntent);
+
+        Intent pingServiceIntent = new Intent(context, PingService.class);
+        mAlarmIntent = PendingIntent.getService(context, 1011, pingServiceIntent, PendingIntent.FLAG_CANCEL_CURRENT);
+
+        am.set(AlarmManager.RTC, 15000, mAlarmIntent);
+
+        Intent refreshIntent = new Intent(Constants.ACTION_UI_REFRESH);
         context.sendBroadcast(refreshIntent);
-
     }
 
     public int getBatteryReading(Context context) {
