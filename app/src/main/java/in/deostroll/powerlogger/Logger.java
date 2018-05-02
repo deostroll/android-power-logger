@@ -32,4 +32,8 @@ public class Logger {
     public void info(String msg) {
         Log.i(getFullModuleName(), msg);
     }
+
+    public void error(String message) {
+        Log.e(getFullModuleName(), message);
+    }
 }

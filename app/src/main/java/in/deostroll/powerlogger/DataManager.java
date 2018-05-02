@@ -23,4 +23,12 @@ class DataManager {
                 .orderAsc(LogEntryDao.Properties.Id)
                 .list();
     }
+
+    public static LogEntryDao getDao(Context context) {
+        DaoMaster.DevOpenHelper helper = new DaoMaster.DevOpenHelper(context, "logs-db");
+        Database db = helper.getWritableDb();
+        DaoSession daoSession = new DaoMaster(db).newSession();
+        LogEntryDao entryDao = daoSession.getLogEntryDao();
+        return entryDao;
+    }
 }

@@ -14,7 +14,12 @@ import android.widget.Button;
 import android.widget.CompoundButton;
 import android.widget.ListView;
 import android.widget.Switch;
+import android.widget.TextView;
 
+import org.w3c.dom.Text;
+
+import java.text.SimpleDateFormat;
+import java.util.Date;
 import java.util.List;
 
 import in.deostroll.powerlogger.database.DaoMaster;
@@ -25,7 +30,7 @@ import in.deostroll.powerlogger.database.LogEntryDao;
 public class MainActivity extends AppCompatActivity {
 
     private static final Logger _log = Logger.init("MAT");
-
+    private SimpleDateFormat fmt = new SimpleDateFormat("E, dd MMM yyyy HH:mm:ss");
     private BroadcastReceiver mRefreshIntentReceiver;
 
     @Override
@@ -47,7 +52,7 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
-        boolean publishFlag = prefs.getBoolean("publish", false);
+        boolean publishFlag = prefs.getBoolean("publish", true);
 
         _log.debug("shared pref - publish get: " + publishFlag);
         swPublish.setChecked(publishFlag);
@@ -61,6 +66,9 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
+        TextView tvBuildTimestamp = (TextView) findViewById(R.id.tvBuildTimestamp);
+        Date dt = new Date(BuildConfig.TIMESTAMP);
+        tvBuildTimestamp.setText(fmt.format(dt));
     }
 
     @Override

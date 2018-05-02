@@ -30,24 +30,17 @@
                 <action android:name="android.intent.action.ACTION_POWER_DISCONNECTED" />
             </intent-filter>
         </receiver>
-        <receiver
-            android:name=".WakeLockController"
-            android:enabled="true"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="in.deostroll.powerlogger.action.ACQUIRE_WAKELOCK" />
-                <action android:name="in.deostroll.powerlogger.action.RELEASE_WAKELOCK" />
-            </intent-filter>
-        </receiver>
 
         <service
             android:name=".HttpPushService"
             android:exported="false" />
-        <service
-            android:name=".PingService"
-            android:exported="false" />
 
-        <activity android:name=".SetUrlActivity"></activity>
+        <activity android:name=".SetUrlActivity" />
+
+        <receiver
+            android:name=".AlarmDispatchReceiver"
+            android:enabled="true"
+            android:exported="true"></receiver>
     </application>
 
 </manifest>

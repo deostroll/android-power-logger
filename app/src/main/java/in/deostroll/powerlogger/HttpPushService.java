@@ -1,141 +1,344 @@
 package in.deostroll.powerlogger;
 
 import android.app.IntentService;
-import android.content.Intent;
 import android.content.Context;
-import android.net.ConnectivityManager;
-import android.net.NetworkInfo;
-import android.os.PowerManager;
+import android.content.Intent;
+import android.content.IntentFilter;
+import android.content.SharedPreferences;
+import android.os.BatteryManager;
+import android.os.Handler;
 import android.support.annotation.Nullable;
-import android.util.Log;
 
 import com.android.volley.Request;
 import com.android.volley.RequestQueue;
 import com.android.volley.Response;
 import com.android.volley.VolleyError;
+import com.android.volley.toolbox.JsonArrayRequest;
 import com.android.volley.toolbox.JsonObjectRequest;
+import com.android.volley.toolbox.JsonRequest;
+import com.android.volley.toolbox.StringRequest;
 import com.android.volley.toolbox.Volley;
 
-import org.greenrobot.greendao.database.Database;
+import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Date;
+import java.util.List;
 
-import in.deostroll.powerlogger.database.DaoMaster;
-import in.deostroll.powerlogger.database.DaoSession;
 import in.deostroll.powerlogger.database.LogEntry;
 import in.deostroll.powerlogger.database.LogEntryDao;
 
-/**
- * An {@link IntentService} subclass for handling asynchronous task requests in
- * a service on a separate handler thread.
- * <p>
- * TODO: Customize class - update intent actions, extra parameters and static
- * helper methods.
- */
 public class HttpPushService extends IntentService {
 
-    private static final String ACTION_POST = "in.deostroll.powerlogger.httppost";
-    private static final String EXTRA_ID = "in.deostroll.powerlogger.recordId";
+    private static SimpleDateFormat sdfDate = new SimpleDateFormat("E, dd MMM yyyy");
+    private static SimpleDateFormat sdfTime = new SimpleDateFormat("HH:mm");
 
-    private SimpleDateFormat sdfDate = new SimpleDateFormat("E, dd MMM yyyy");
-    private SimpleDateFormat sdfTime = new SimpleDateFormat("HH:mm");
-
-    private static final String url = "https://script.google.com/macros/s/AKfycbymGQB00rmSf1u-F0vuAV97q0nxvwaqrqhzfojFtp_gDJNHmYs/exec";
-
-    static private RequestQueue queue;
+    private static Logger _log = Logger.init("HPS");
 
     public HttpPushService() {
         super("HttpPushService");
     }
+    private String url;
+
+    final int INDEX_COUNT = 0;
+    final int INDEX_FINISHED = 1;
+    final int INDEX_ERRORS = 2;
 
     @Override
     protected void onHandleIntent(@Nullable Intent intent) {
-        if(intent != null){
-            String action = intent.getAction();
-            if(action.equals(ACTION_POST)) {
-                postData(intent);
+
+        SharedPreferences prefs = getSharedPreferences("prefs", MODE_PRIVATE);
+        String DEFAULT_URL = getResources().getString(R.string.script_url);
+        url = prefs.getString("url", DEFAULT_URL);
+
+        RequestQueue queue = Volley.newRequestQueue(this);
+        final AutoResetEvent evt = new AutoResetEvent(false);
+        doPing(queue);
+
+        RequestQueue.RequestFinishedListener<String> pingListener;
+        pingListener = new RequestQueue.RequestFinishedListener<String>() {
+            @Override
+            public void onRequestFinished(Request<String> request) {
+                evt.set();
+                try {
+                    Thread.sleep(3000);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+                _log.info("Pinged");
             }
-            else {
-                Log.d("APL:HPS", "Nothing to do...");
+        };
+
+        try {
+            _log.debug("Waiting for ping to complete");
+            evt.waitOne();
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+
+        queue.removeRequestFinishedListener(pingListener);
+        final AutoResetEvent evt2 = new AutoResetEvent(false);
+        final Handler h = new Handler();
+        final Runnable delayedReset = new Runnable() {
+            @Override
+            public void run() {
+                evt2.set();
+            }
+        };
+
+        RequestQueue.RequestFinishedListener<JSONObject> uploadedListener = new RequestQueue.RequestFinishedListener<JSONObject>() {
+            @Override
+            public void onRequestFinished(Request<JSONObject> request) {
+                h.removeCallbacks(delayedReset);
+                h.postDelayed(delayedReset, 10000);
+            }
+        };
+        queue.addRequestFinishedListener(uploadedListener);
+
+        List<LogEntry> entries = DataManager.getNonSynched(this);
+
+        doUpload(entries, queue);
+
+        try {
+            _log.debug("Waiting for upload to finish");
+            evt2.waitOne();
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+
+        queue.removeRequestFinishedListener(uploadedListener);
+
+        AutoResetEvent evt3 = new AutoResetEvent(false);
+
+        sync(entries, queue, evt3);
+
+        try {
+            _log.debug("Waiting for sync");
+            evt3.waitOne();
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+
+        _log.info("Done with http push");
+
+    }
+
+    private void sync(final List<LogEntry> entries, RequestQueue queue, AutoResetEvent evt3) {
+        String checkUrl = String.format("%s?op=verify&count=%d", url, entries.size());
+        JsonArrayRequest req = new JsonArrayRequest(checkUrl, new Response.Listener<JSONArray>() {
+            @Override
+            public void onResponse(JSONArray response) {
+                List<Long> ids = new ArrayList<>();
+
+                for(int k = 0, l = response.length(); k < l; k++) {
+                    try {
+                        ids.add(response.getLong(k));
+                    } catch (JSONException e) {
+                        e.printStackTrace();
+                    }
+                }
+
+                LogEntryDao entryDao = DataManager.getDao(HttpPushService.this);
+
+                for(LogEntry item : entries) {
+                    Long itemId = item.getId();
+                    if(ids.indexOf((Object)itemId) > -1) {
+                        item.setIsSynched(true);
+                        entryDao.update(item);
+                    }
+                }
+
+            }
+        }, new Response.ErrorListener() {
+            @Override
+            public void onErrorResponse(VolleyError error) {
+
+            }
+        });
+    }
+
+    private void doUpload(List<LogEntry> entries, RequestQueue queue) {
+
+        JSONArray arr = new JSONArray();
+
+        for (LogEntry item: entries) {
+            JSONObject obj = makeJSONObject(item);
+            arr.put(obj);
+            if(arr.length() == Constants.BATCH_SIZE) {
+                uploadBatch(arr, queue);
+                arr = new JSONArray();
             }
         }
+
+        if(arr.length() > 0) {
+            uploadBatch(arr, queue);
+        }
+
     }
 
-    private boolean isNetworkAvailable() {
-        ConnectivityManager connectivityManager
-                = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
-        NetworkInfo activeNetworkInfo = connectivityManager.getActiveNetworkInfo();
-        return activeNetworkInfo != null && activeNetworkInfo.isConnected();
+    private void uploadBatch(JSONArray arr, RequestQueue queue) {
+        try {
+            JSONObject payload = new JSONObject()
+                    .accumulate("entries", arr);
+            JsonObjectRequest req = new JsonObjectRequest(Request.Method.POST, url, payload, null,null);
+            queue.add(req);
+        } catch (JSONException e) {
+            e.printStackTrace();
+        }
+
     }
 
-    private RequestQueue getRequestQueue(){
-        return Volley.newRequestQueue(this);
+    private void doPing(RequestQueue queue) {
+        String pingUrl = String.format("%s?op=ping&battery=%d", url, getBatteryReading(this));
+        StringRequest req = new StringRequest(Request.Method.GET, pingUrl, null, null);
+        queue.add(req);
     }
 
-    private void postData(Intent intent) {
+//    @Override
+//    protected void onHandleIntent(@Nullable Intent intent) {
+//        if(intent != null) {
+//            RequestQueue queue = Volley.newRequestQueue(this);
+//            final int[] counters = {0, 0, 0};
+//
+//            final long[] ids = intent.getLongArrayExtra(Constants.INTENT_FIELD_RECORD_IDS);
+//
+//            SharedPreferences prefs = getSharedPreferences("prefs", MODE_PRIVATE);
+//            String url = prefs.getString("url", getResources().getString(R.string.script_url));
+//            queue.addRequestFinishedListener(new RequestQueue.RequestFinishedListener<JSONObject>() {
+//                @Override
+//                public void onRequestFinished(Request<JSONObject> request) {
+//                    counters[INDEX_FINISHED]++;
+//                    _log.verbose(String.format("Count: %d, Finished: %d", counters[INDEX_COUNT], counters[INDEX_FINISHED]));
+//                    if(counters[INDEX_COUNT] == counters[INDEX_FINISHED]) {
+//                        Intent wakeLockRelease = new Intent(Constants.ACTION_WAKELOCK_RELEASE);
+//                        sendBroadcast(wakeLockRelease);
+//                        int l = ids.length;
+//                        LogEntryDao _entryDao = DataManager.getDao(HttpPushService.this);
+//                        for(int k = 0; k < l; k++) {
+//                            long _id = ids[k];
+//                            LogEntry _entry = _entryDao.load(_id);
+//                            _entry.setIsSynched(true);
+//                            _entryDao.update(_entry);
+//                        }
+//                        _log.info("Push service done");
+//                    }
+//                }
+//            });
+//
+//            JSONArray arr = new JSONArray();
+//
+//            for(int k = 0; k < ids.length; k++) {
+//                long id = ids[k];
+//                counters[INDEX_COUNT]++;
+//                LogEntryDao entryDao = DataManager.getDao(this);
+//                LogEntry entry = entryDao.load(id);
+//                JSONObject obj = makeJSONObject(entry);
+//                arr.put(obj);
+//                if(arr.length() == Constants.BATCH_SIZE) {
+//                    post(url, arr, counters, queue);
+//                    arr = new JSONArray();
+//                }
+//            }
+//
+//            if(arr.length() > 0) {
+//                post(url, arr, counters, queue);
+//            }
+//        }
+//    }
+//
+    private JSONObject makeJSONObject(LogEntry entry) {
 
-        PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
-        final PowerManager.WakeLock wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "HPS");
+        Date ts = entry.getTimestamp();
+        String dateString = sdfDate.format(ts);
+        String timeString = sdfTime.format(ts);
 
-        final long id = intent.getLongExtra(EXTRA_ID, -1);
-        if(id != -1 && isNetworkAvailable()) {
-            DaoMaster.DevOpenHelper helper = new DaoMaster.DevOpenHelper(this, "logs-db");
-            Database db = helper.getWritableDb();
-            DaoSession daoSession = new DaoMaster(db).newSession();
-            LogEntryDao entryDao = daoSession.getLogEntryDao();
-            LogEntry entry = entryDao.load(id);
-            Date entryDate = entry.getTimestamp();
-
-            String dateString = sdfDate.format(entryDate);
-            String timeString = sdfTime.format(entryDate);
-
-            JSONObject payload = null;
-
-            try {
-                payload = new JSONObject()
+        try {
+            return new JSONObject()
+                    .accumulate("id", entry.getId())
                     .accumulate("status", entry.getPowerStatus())
                     .accumulate("battery", entry.getBatteryReading())
                     .accumulate("dateString", dateString)
                     .accumulate("timeString", timeString);
-            } catch (JSONException e) {
-                e.printStackTrace();
-                Log.e("APL:HPS", "Json Data Format", e);
-                return;
-            }
-
-//            RequestQueue queue = Volley.newRequestQueue(this);
-            Log.v("APL:HPS", String.format("Payload: %s", payload.toString()));
-            JsonObjectRequest httpPost = new JsonObjectRequest(
-                    Request.Method.POST,
-                    url,
-                    payload,
-                    new Response.Listener<JSONObject>() {
-                        @Override
-                        public void onResponse(JSONObject response) {
-                            wakeLock.release();
-                            Log.d("APL:HPS", String.format("Response posted for record: %d", id));
-                        }
-                    },
-                    new Response.ErrorListener() {
-                        @Override
-                        public void onErrorResponse(VolleyError error) {
-                            wakeLock.release();
-                            Log.e("APL:HPS", String.format("HttpError while posting record: %d", id), error);
-                        }
-                    }
-            );
-            wakeLock.acquire();
-            if(queue == null) {
-                Log.d("APL:HPS", "Obtaining request queue");
-                queue = getRequestQueue();
-            }
-            queue.add(httpPost);
-            Log.d("APL:HPS", "Sending record: " + id);
+        } catch (JSONException e) {
+            e.printStackTrace();
         }
+        return null;
     }
+//
+//    private void post(String url, JSONArray arr, final int[] counters, RequestQueue queue) {
+//        counters[INDEX_COUNT]++;
+//        final int batch_count = counters[INDEX_COUNT];
+//
+//        JSONObject payload = null;
+//        try {
+//            payload = new JSONObject()
+//                    .accumulate("entries", arr)
+//                    .accumulate("postedTimestamp", System.currentTimeMillis());
+//        } catch (JSONException e) {
+//            _log.error(Log.getStackTraceString(e));
+//            return;
+//        }
+//        JsonObjectRequest req = new JsonObjectRequest(Request.Method.POST, url, payload, null, new Response.ErrorListener() {
+//            @Override
+//            public void onErrorResponse(VolleyError error) {
+//                if(error.networkResponse != null && error.networkResponse.statusCode != 200) {
+//                    _log.error("Error while posting batch: " + batch_count);
+//                    _log.error(Log.getStackTraceString(error));
+//                    counters[INDEX_ERRORS]++;
+//                }
+//            }
+//        });
+//        req.setRetryPolicy(new DefaultRetryPolicy(5000 , 0, 0));
+//        queue.add(req);
+//        _log.debug("Posted batch: " + batch_count);
+//    }
+//
+//    private void post(String url, RequestQueue queue, final int[] counters, final LogEntry entry, final LogEntryDao entryDao) {
+//
+//        long id = entry.getId();
+//
+//        JSONObject payload = null;
+//        try {
+//            payload = new JSONObject()
+//                    .accumulate("status", entry.getPowerStatus())
+//                    .accumulate("battery", entry.getBatteryReading())
+//                    .accumulate("dateString", sdfDate.format(entry.getTimestamp()))
+//                    .accumulate("timeString", sdfTime.format(entry.getTimestamp()));
+//        } catch (JSONException e) {
+//            _log.error(String.format("Error in json : %s", Log.getStackTraceString(e)));
+//            return;
+//        }
+//
+//        queue.add(new JsonObjectRequest(Request.Method.POST, url, payload, new Response.Listener<JSONObject>() {
+//            @Override
+//            public void onResponse(JSONObject response) {
+//                entry.setIsSynched(true);
+//                entryDao.update(entry);
+//
+//            }
+//        }, new Response.ErrorListener() {
+//            @Override
+//            public void onErrorResponse(VolleyError error) {
+//                if (error.networkResponse != null && error.networkResponse.statusCode != 200) {
+//                    _log.error(String.format("VolleyError: %s", Log.getStackTraceString(error)));
+//                    counters[INDEX_ERRORS]++;
+//                }
+//            }
+//        }).setTag(entry).setRetryPolicy(new DefaultRetryPolicy(5000, 0, 0)));
+//    }
 
+    public int getBatteryReading(Context context) {
+        IntentFilter iFilter = new IntentFilter(Intent.ACTION_BATTERY_CHANGED);
+        Intent batteryStatus = context.registerReceiver(null, iFilter);
 
+        int level = batteryStatus != null ? batteryStatus.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) : -1;
+        int scale = batteryStatus != null ? batteryStatus.getIntExtra(BatteryManager.EXTRA_SCALE, -1) : -1;
+
+        float batteryPct = level / (float) scale;
+
+        return (int) (batteryPct * 100);
+    }
 }

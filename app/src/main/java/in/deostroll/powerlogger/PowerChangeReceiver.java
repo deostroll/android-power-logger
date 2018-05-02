@@ -6,6 +6,7 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.SharedPreferences;
 import android.database.sqlite.SQLiteDatabase;
 import android.os.BatteryManager;
 import android.os.Handler;
@@ -25,13 +26,6 @@ public class PowerChangeReceiver extends BroadcastReceiver {
 
     static Logger _log = Logger.init("PCR");
 
-    private static PendingIntent mAlarmIntent;
-
-    private static final String ACTION_POST = "in.deostroll.powerlogger.httppost";
-    private static final String EXTRA_ID = "in.deostroll.powerlogger.recordId";
-
-    private static final String ACTION_REFRESH = "in.deostroll.powerlogger.refresh";
-
     @Override
     public void onReceive(Context context, Intent intent) {
         String currentAction = intent.getAction();
@@ -43,12 +37,12 @@ public class PowerChangeReceiver extends BroadcastReceiver {
             status = "OFF";
         }
 
-        AlarmManager am = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
-        LogPowerChange(context, status, getBatteryReading(context), am);
+
+        LogPowerChange(context, status, getBatteryReading(context));
         Toast.makeText(context, String.format("Status: %s", status), Toast.LENGTH_SHORT).show();
     }
 
-    public void LogPowerChange(Context context, String status, int batteryReading, AlarmManager am) {
+    public void LogPowerChange(final Context context, String status, int batteryReading) {
 
         DaoMaster.DevOpenHelper helper = new DaoMaster.DevOpenHelper(context, "logs-db");
         Database db = helper.getWritableDb();
@@ -64,20 +58,18 @@ public class PowerChangeReceiver extends BroadcastReceiver {
         long recordId = entryDao.insert(entry);
         _log.debug("Inserted record: " + recordId);
 
-        if(mAlarmIntent != null) {
-            am.cancel(mAlarmIntent);
-        }
-
-        Intent wakeLockIntent = new Intent(Constants.ACTION_WAKELOCK_ACQUIRE);
-        context.sendBroadcast(wakeLockIntent);
-
-        Intent pingServiceIntent = new Intent(context, PingService.class);
-        mAlarmIntent = PendingIntent.getService(context, 1011, pingServiceIntent, PendingIntent.FLAG_CANCEL_CURRENT);
-
-        am.set(AlarmManager.RTC, 15000, mAlarmIntent);
-
         Intent refreshIntent = new Intent(Constants.ACTION_UI_REFRESH);
         context.sendBroadcast(refreshIntent);
+
+        SharedPreferences prefs = context.getSharedPreferences("prefs", Context.MODE_PRIVATE);
+
+        boolean isServiceStarted = prefs.getBoolean("isServiceStarted", false);
+
+        if(!isServiceStarted){
+            Intent alarmDispatch = new Intent(context, AlarmDispatchReceiver.class);
+            context.sendBroadcast(alarmDispatch);
+            _log.info("Broadcasted for repeating alarm receiver to pickup");
+        }
     }
 
     public int getBatteryReading(Context context) {

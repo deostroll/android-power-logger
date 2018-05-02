@@ -20,7 +20,7 @@ public class SetUrlActivity extends AppCompatActivity {
 
         final SharedPreferences prefs = getSharedPreferences("prefs", MODE_PRIVATE);
 
-        String url = prefs.getString("url", Constants.DEFAULT_URL);
+        String url = prefs.getString("url", getResources().getString(R.string.script_url));
 
         Button btnDone = (Button) findViewById(R.id.btnDone);
         Button btnSet = (Button)findViewById(R.id.btnSet);

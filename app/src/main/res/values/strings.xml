@@ -1,3 +1,4 @@
 <resources>
-    <string name="app_name">PowerLogger</string>
+    <string name="app_name">Android Power Logger</string>
+    <string name="script_url" translatable="false">https://script.google.com/macros/s/AKfycbymGQB00rmSf1u-F0vuAV97q0nxvwaqrqhzfojFtp_gDJNHmYs/exec</string>
 </resources>
