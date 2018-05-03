@@ -13,3 +13,5 @@ the phone.
 
 This project bundles with it the android app, and, a small http server (express). The server is
 purely for testing purposes only.
+
+For this to work though, you need to deploy a google script application as a web application, give it necessary permissions so that anyone with the link can access anonymously. (Those have to be changed in the code too - it is currently hard coded to my account).
