@@ -37,7 +37,6 @@ public class PowerChangeReceiver extends BroadcastReceiver {
             status = "OFF";
         }
 
-
         LogPowerChange(context, status, getBatteryReading(context));
         Toast.makeText(context, String.format("Status: %s", status), Toast.LENGTH_SHORT).show();
     }
@@ -65,7 +64,7 @@ public class PowerChangeReceiver extends BroadcastReceiver {
 
         boolean isServiceStarted = prefs.getBoolean("isServiceStarted", false);
 
-        if(!isServiceStarted){
+        if(!AlarmDispatchReceiver.isStarted){
             Intent alarmDispatch = new Intent(context, AlarmDispatchReceiver.class);
             context.sendBroadcast(alarmDispatch);
             _log.info("Broadcasted for repeating alarm receiver to pickup");

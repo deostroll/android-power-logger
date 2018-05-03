@@ -8,18 +8,32 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 
 public class AlarmDispatchReceiver extends BroadcastReceiver {
+
+    public static boolean isStarted = false;
     static Logger _log = Logger.init("ADR");
     @Override
     public void onReceive(Context context, Intent intent) {
-        SharedPreferences prefs = context.getSharedPreferences("prefs", Context.MODE_PRIVATE);
-        boolean isServiceStarted = prefs.getBoolean("isServiceStarted", false);
-        if (!isServiceStarted) {
-            SharedPreferences.Editor editor = prefs.edit();
+
+        if (!isStarted) {
+
             AlarmManager am = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
             PendingIntent operation = PendingIntent.getService(context, 1011, new Intent(context, HttpPushService.class), PendingIntent.FLAG_CANCEL_CURRENT);
-            am.setInexactRepeating(AlarmManager.RTC_WAKEUP, System.currentTimeMillis() + 1000, AlarmManager.INTERVAL_FIFTEEN_MINUTES, operation);
-            editor.putBoolean("isServiceStarted", true);
-            editor.commit();
+
+            am.setRepeating (
+                    AlarmManager.RTC_WAKEUP,
+                    System.currentTimeMillis() + 1000,
+                    AlarmManager.INTERVAL_FIFTEEN_MINUTES,
+                    operation);
+
+            PendingIntent clearOperation = PendingIntent.getBroadcast(context, 4011, new Intent(context, ClearLogsReceiver.class), PendingIntent.FLAG_CANCEL_CURRENT);
+
+            am.setRepeating(
+                    AlarmManager.RTC,
+                    System.currentTimeMillis() + AlarmManager.INTERVAL_DAY,
+                    AlarmManager.INTERVAL_DAY,
+                    clearOperation);
+
+            isStarted = true;
             _log.info("Scheduled repeating alarm");
         }
     }

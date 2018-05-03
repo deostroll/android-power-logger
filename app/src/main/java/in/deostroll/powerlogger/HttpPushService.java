@@ -8,6 +8,7 @@ import android.content.SharedPreferences;
 import android.os.BatteryManager;
 import android.os.Handler;
 import android.support.annotation.Nullable;
+import android.util.Log;
 
 import com.android.volley.Request;
 import com.android.volley.RequestQueue;
@@ -27,6 +28,8 @@ import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
+import java.util.Timer;
+import java.util.TimerTask;
 
 import in.deostroll.powerlogger.database.LogEntry;
 import in.deostroll.powerlogger.database.LogEntryDao;
@@ -37,16 +40,14 @@ public class HttpPushService extends IntentService {
     private static SimpleDateFormat sdfTime = new SimpleDateFormat("HH:mm");
 
     private static Logger _log = Logger.init("HPS");
-
+    private Timer tmr;
     public HttpPushService() {
         super("HttpPushService");
     }
     private String url;
 
-    final int INDEX_COUNT = 0;
-    final int INDEX_FINISHED = 1;
-    final int INDEX_ERRORS = 2;
-
+    int batchCounter = 0;
+    int totalBatches = 0;
     @Override
     protected void onHandleIntent(@Nullable Intent intent) {
 
@@ -56,8 +57,7 @@ public class HttpPushService extends IntentService {
 
         RequestQueue queue = Volley.newRequestQueue(this);
         final AutoResetEvent evt = new AutoResetEvent(false);
-        doPing(queue);
-
+        // 1. Do ping
         RequestQueue.RequestFinishedListener<String> pingListener;
         pingListener = new RequestQueue.RequestFinishedListener<String>() {
             @Override
@@ -72,6 +72,9 @@ public class HttpPushService extends IntentService {
             }
         };
 
+        queue.addRequestFinishedListener(pingListener);
+        doPing(queue);
+
         try {
             _log.debug("Waiting for ping to complete");
             evt.waitOne();
@@ -80,25 +83,31 @@ public class HttpPushService extends IntentService {
         }
 
         queue.removeRequestFinishedListener(pingListener);
-        final AutoResetEvent evt2 = new AutoResetEvent(false);
-        final Handler h = new Handler();
-        final Runnable delayedReset = new Runnable() {
-            @Override
-            public void run() {
-                evt2.set();
-            }
-        };
 
+        // 2. do upload
+
+        final AutoResetEvent evt2 = new AutoResetEvent(false);
+
+
+
+        List<LogEntry> entries = DataManager.getNonSynched(this);
+        if(entries.size() == 0) {
+            _log.info("Nothing to process");
+            return;
+        }
+        totalBatches = (int) Math.ceil(entries.size()*1.0/Constants.BATCH_SIZE);
         RequestQueue.RequestFinishedListener<JSONObject> uploadedListener = new RequestQueue.RequestFinishedListener<JSONObject>() {
             @Override
             public void onRequestFinished(Request<JSONObject> request) {
-                h.removeCallbacks(delayedReset);
-                h.postDelayed(delayedReset, 10000);
+
+                batchCounter++;
+                _log.verbose(String.format("Batch count: %d, Total: %d", batchCounter, totalBatches));
+                if(batchCounter == totalBatches) {
+                    evt2.set();
+                }
             }
         };
         queue.addRequestFinishedListener(uploadedListener);
-
-        List<LogEntry> entries = DataManager.getNonSynched(this);
 
         doUpload(entries, queue);
 
@@ -126,13 +135,14 @@ public class HttpPushService extends IntentService {
 
     }
 
-    private void sync(final List<LogEntry> entries, RequestQueue queue, AutoResetEvent evt3) {
-        String checkUrl = String.format("%s?op=verify&count=%d", url, entries.size());
+    private void sync(final List<LogEntry> entries, RequestQueue queue, final AutoResetEvent evt3) {
+        String checkUrl = String.format("%s?op=verify&count=%d&_=%d", url, entries.size(), new Date().getTime());
+        _log.verbose("checkUrl: " + checkUrl);
         JsonArrayRequest req = new JsonArrayRequest(checkUrl, new Response.Listener<JSONArray>() {
             @Override
             public void onResponse(JSONArray response) {
                 List<Long> ids = new ArrayList<>();
-
+                _log.verbose("Sync response: " + response.toString());
                 for(int k = 0, l = response.length(); k < l; k++) {
                     try {
                         ids.add(response.getLong(k));
@@ -147,21 +157,27 @@ public class HttpPushService extends IntentService {
                     Long itemId = item.getId();
                     if(ids.indexOf((Object)itemId) > -1) {
                         item.setIsSynched(true);
+                        _log.verbose("Updating status of item: " + itemId);
                         entryDao.update(item);
                     }
+                    else {
+                        _log.warn("Item not synced: " + itemId);
+                    }
                 }
-
+                evt3.set();
             }
         }, new Response.ErrorListener() {
             @Override
             public void onErrorResponse(VolleyError error) {
-
+                _log.error("Sync error: " + Log.getStackTraceString(error));
+                evt3.set();
             }
         });
+        queue.add(req);
     }
 
     private void doUpload(List<LogEntry> entries, RequestQueue queue) {
-
+        _log.verbose(String.format("Count: %d", entries.size()));
         JSONArray arr = new JSONArray();
 
         for (LogEntry item: entries) {
@@ -180,10 +196,21 @@ public class HttpPushService extends IntentService {
     }
 
     private void uploadBatch(JSONArray arr, RequestQueue queue) {
+        _log.verbose(String.format("Uploading batch: %d", arr.length()));
         try {
             JSONObject payload = new JSONObject()
                     .accumulate("entries", arr);
-            JsonObjectRequest req = new JsonObjectRequest(Request.Method.POST, url, payload, null,null);
+            JsonObjectRequest req = new JsonObjectRequest(Request.Method.POST, url, payload, new Response.Listener<JSONObject>() {
+                @Override
+                public void onResponse(JSONObject response) {
+                    _log.verbose("uploadBatchResponse: " + response.toString());
+                }
+            }, new Response.ErrorListener() {
+                @Override
+                public void onErrorResponse(VolleyError error) {
+                    _log.error("uploadBatchError: " + Log.getStackTraceString(error));
+                }
+            });
             queue.add(req);
         } catch (JSONException e) {
             e.printStackTrace();

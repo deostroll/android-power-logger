@@ -36,4 +36,8 @@ public class Logger {
     public void error(String message) {
         Log.e(getFullModuleName(), message);
     }
+
+    public void warn(String message) {
+        Log.w(getFullModuleName(), message);
+    }
 }
